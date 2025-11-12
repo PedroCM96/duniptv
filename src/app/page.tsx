@@ -14,57 +14,17 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PlaylistPlayIcon from '@mui/icons-material/PlaylistPlay';
 import Player from '@/app/components/player';
-
-type Channel = { name: string; url: string; logo?: string; group?: string; };
-type PlaylistMeta = { listName: string; listUrl: string; channelCount: number };
-
-const LS_INDEX_KEY = 'iptv_playlists_index_v1';
-function channelsKey(listName: string) {
-    return `iptv_channels::${listName}`;
-}
-
-
-function loadIndex(): PlaylistMeta[] {
-    try {
-        const raw = localStorage.getItem(LS_INDEX_KEY);
-        if (!raw) return [];
-        return JSON.parse(raw) as PlaylistMeta[];
-    } catch {
-        return [];
-    }
-}
-
-function saveIndex(index: PlaylistMeta[]) {
-    const payload = JSON.stringify(index);
-    localStorage.setItem(LS_INDEX_KEY, payload);
-    const back = localStorage.getItem(LS_INDEX_KEY);
-    if (back !== payload) throw new Error('Verification failed writing index');
-}
-
-function loadChannels(listName: string): Channel[] {
-    try {
-        const raw = localStorage.getItem(channelsKey(listName));
-        if (!raw) return [];
-        return JSON.parse(raw) as Channel[];
-    } catch {
-        return [];
-    }
-}
-
-function saveChannels(listName: string, channels: Channel[]) {
-    const payload = JSON.stringify(channels);
-    localStorage.setItem(channelsKey(listName), payload); // puede lanzar quota
-    const back = localStorage.getItem(channelsKey(listName));
-    if (back !== payload) throw new Error('Verification failed writing channels');
-}
-
-function deletePlaylistStorage(listName: string) {
-    try { localStorage.removeItem(channelsKey(listName)); } catch {}
-    try {
-        const idx = loadIndex().filter(p => p.listName !== listName);
-        saveIndex(idx);
-    } catch {}
-}
+import Image from 'next/image';
+import {Channel, PlaylistMeta} from "@/app/types";
+import {
+    dbLoadChannels,
+    dbLoadIndex,
+    dbPutPlaylist,
+    idbOpen,
+    idbTxComplete,
+    STORE_CHANNELS,
+    STORE_PLAYLISTS
+} from "@/app/indexdb";
 
 export default function Home() {
     const [index, setIndex] = useState<PlaylistMeta[]>([]);
@@ -86,21 +46,33 @@ export default function Home() {
     const [filter, setFilter] = useState('');
 
     const playerRef = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        const idx = loadIndex();
-        setIndex(idx);
-        setShowForm(idx.length === 0);
-    }, []);
 
+    useEffect(() => {
+        (async () => {
+            try {
+                const idx = await dbLoadIndex();
+                setIndex(idx);
+                setShowForm(idx.length === 0);
+            } catch (e: any) {
+                setPersistError(e?.message ?? 'Error opening storage');
+            }
+        })();
+    }, []);
 
     useEffect(() => {
         if (!selectedList) return;
-        const ch = loadChannels(selectedList.listName);
-        setChannels(ch);
-        setCurrent(null);
-        setSelectedGroup(null);
-        setFilter('');
-        setPage(1);
+        (async () => {
+            try {
+                const ch = await dbLoadChannels(selectedList.listName);
+                setChannels(ch);
+                setCurrent(null);
+                setSelectedGroup(null);
+                setFilter('');
+                setPage(1);
+            } catch (e: any) {
+                setPersistError(e?.message ?? 'Error reading playlist');
+            }
+        })();
     }, [selectedList]);
 
     useEffect(() => {
@@ -121,26 +93,17 @@ export default function Home() {
             if (!res.ok) throw new Error(data?.error || 'Cannot parse M3U');
 
             const ch: Channel[] = data.channels ?? [];
-            saveChannels(name, ch);
-            const nextIdx = (() => {
-                const existing = index.find(i => i.listName === name);
-                if (existing) {
-                    return index.map(i => i.listName === name ? { listName: name, listUrl: url, channelCount: ch.length } : i);
-                }
-                return [{ listName: name, listUrl: url, channelCount: ch.length }, ...index];
-            })();
-            saveIndex(nextIdx);
+            const meta: PlaylistMeta = { listName: name, listUrl: url, channelCount: ch.length };
+            await dbPutPlaylist(meta, ch);
 
+            // estado
+            const nextIdx = await dbLoadIndex();
             setIndex(nextIdx);
-            setSelectedList({ listName: name, listUrl: url, channelCount: ch.length });
+            setSelectedList(meta);
             setChannels(ch);
             setShowForm(false);
         } catch (e: any) {
-            if (e?.name === 'QuotaExceededError' || /quota|storage/i.test(String(e))) {
-                setPersistError('No enough storage (limit ~5 MB). Delete lists.');
-            } else {
-                setError(e?.message ?? 'Error');
-            }
+            setError(e?.message ?? 'Error');
         } finally {
             setLoading(false);
         }
@@ -158,18 +121,29 @@ export default function Home() {
         await parseAndPersist(pl.listName, pl.listUrl);
     };
 
-    const onDeletePlaylist = (pl: PlaylistMeta) => {
+    const onDeletePlaylist = async (pl: PlaylistMeta) => {
         if (!confirm(`Delete playlist "${pl.listName}"?`)) return;
-        deletePlaylistStorage(pl.listName);
-        const nextIdx = index.filter(i => i.listName !== pl.listName);
-        setIndex(nextIdx);
-        if (selectedList?.listName === pl.listName) {
-            setSelectedList(null);
-            setChannels([]);
-            setCurrent(null);
-            setSelectedGroup(null);
-            setFilter('');
-            setPage(1);
+        try {
+            const db = await idbOpen();
+            const tx = db.transaction([STORE_PLAYLISTS, STORE_CHANNELS], 'readwrite');
+            tx.objectStore(STORE_PLAYLISTS).delete(pl.listName);
+            tx.objectStore(STORE_CHANNELS).delete(pl.listName);
+            await idbTxComplete(tx);
+            db.close();
+
+            const nextIdx = await dbLoadIndex();
+            setIndex(nextIdx);
+
+            if (selectedList?.listName === pl.listName) {
+                setSelectedList(null);
+                setChannels([]);
+                setCurrent(null);
+                setSelectedGroup(null);
+                setFilter('');
+                setPage(1);
+            }
+        } catch (e: any) {
+            setPersistError(e?.message ?? 'Error deleting playlist');
         }
     };
 
@@ -206,83 +180,80 @@ export default function Home() {
         <Container maxWidth="lg" sx={{ py: 4 }}>
             <Stack spacing={3}>
                 {!selectedList && (
-                    <Card>
-                        <CardHeader
-                            title="IPTV lists"
-                            action={
-                                <Button startIcon={<AddIcon />} variant="outlined" onClick={() => setShowForm(s => !s)}>
-                                    {showForm ? 'Close' : 'New playlist'}
-                                </Button>
-                            }
-                        />
-                        <CardContent>
-                            {index.length === 0 && !showForm && (
-                                <Alert severity="info" sx={{ mb: 2 }}>
-                                    No playlist saved. Create a new one.
-                                </Alert>
-                            )}
+                    <>
+                        <Stack content={'center'} alignItems={'center'}>
+                            <Image unoptimized src={'/logo.png?v=2'} alt={'DUNIPTV'} width={400} height={400}/>
+                            <Typography variant={'h3'} fontWeight={700} color={"#00ffa3"}>DUNIPTV</Typography>
+                        </Stack>
+                        <Card>
+                            <CardHeader
+                                title="IPTV lists"
+                                action={
+                                    <Button startIcon={<AddIcon />} variant="outlined" onClick={() => setShowForm(s => !s)}>
+                                        {showForm ? 'Close' : 'New playlist'}
+                                    </Button>
+                                }
+                            />
+                            <CardContent>
+                                {index.length === 0 && !showForm && (
+                                    <Alert severity="info" sx={{ mb: 2 }}>
+                                        No playlist saved. Create a new one.
+                                    </Alert>
+                                )}
 
-                            {index.length > 0 && (
-                                <Stack spacing={1} sx={{ mb: 3 }}>
-                                    {index.map((pl) => (
-                                        <Stack
-                                            key={pl.listName}
-                                            direction="row"
-                                            spacing={2}
-                                            alignItems="center"
-                                            sx={{
-                                                border: '1px solid', borderColor: 'divider', px: 1.5, py: 1.25, borderRadius: 1,
-                                            }}
-                                        >
-                                            <Box sx={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
-                                                 onClick={() => setSelectedList(pl)}>
-                                                <Typography variant="subtitle1" noWrap title={pl.listName}>
-                                                    {pl.listName}
-                                                </Typography>
-                                                <Typography variant="caption" color="text.secondary" noWrap title={pl.listUrl}>
-                                                    {pl.listUrl}
-                                                </Typography>
-                                            </Box>
-                                            <Chip label={`${pl.channelCount} channels`} size="small" sx={{ mr: 1 }} />
-                                            <IconButton aria-label="refresh" title="Refresh list" onClick={() => onRefreshPlaylist(pl)}>
-                                                <RefreshIcon fontSize="small" />
-                                            </IconButton>
-                                            <IconButton aria-label="delete" title="Delete list" onClick={() => onDeletePlaylist(pl)}>
-                                                <DeleteIcon fontSize="small" color="error" />
-                                            </IconButton>
-                                        </Stack>
-                                    ))}
-                                </Stack>
-                            )}
-                            {showForm && (
-                                <Stack spacing={2}>
-                                    <Grid container spacing={2}>
-                                        <TextField
-                                            fullWidth label="List name" placeholder="My IPTV"
-                                            value={listName} onChange={(e) => setListName(e.target.value)}
-                                        />
-                                        <TextField
-                                            fullWidth label="Playlist URL (M3U)" placeholder="https://example.com/list.m3u"
-                                            value={m3uUrl} onChange={(e) => setM3uUrl(e.target.value)}
-                                        />
-                                    </Grid>
-                                    <Box>
-                                        <Button variant="contained" onClick={onCreatePlaylist} disabled={!listName || !m3uUrl || loading}>
-                                            {loading ? <CircularProgress size={22} /> : 'Create and load'}
-                                        </Button>{' '}
-                                        {index.length > 0 && (
-                                            <Button variant="text" onClick={() => setShowForm(false)}>Cancel</Button>
-                                        )}
-                                    </Box>
-                                    {error && <Alert severity="error">{error}</Alert>}
-                                    {persistError && <Alert severity="warning">{persistError}</Alert>}
-                                </Stack>
-                            )}
-                        </CardContent>
-                    </Card>
+                                {index.length > 0 && (
+                                    <Stack spacing={1} sx={{ mb: 3 }}>
+                                        {index.map((pl) => (
+                                            <Stack
+                                                key={pl.listName}
+                                                direction="row"
+                                                spacing={2}
+                                                alignItems="center"
+                                                sx={{ border: '1px solid', borderColor: 'divider', px: 1.5, py: 1.25, borderRadius: 1 }}
+                                            >
+                                                <Box sx={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setSelectedList(pl)}>
+                                                    <Typography variant="subtitle1" noWrap title={pl.listName}>{pl.listName}</Typography>
+                                                    <Typography variant="caption" color="text.secondary" noWrap title={pl.listUrl}>{pl.listUrl}</Typography>
+                                                </Box>
+                                                <Chip label={`${pl.channelCount} channels`} size="small" sx={{ mr: 1 }} />
+                                                <IconButton aria-label="refresh" title="Refresh list" onClick={() => onRefreshPlaylist(pl)}>
+                                                    <RefreshIcon fontSize="small" />
+                                                </IconButton>
+                                                <IconButton aria-label="delete" title="Delete list" onClick={() => onDeletePlaylist(pl)}>
+                                                    <DeleteIcon fontSize="small" color="error" />
+                                                </IconButton>
+                                            </Stack>
+                                        ))}
+                                    </Stack>
+                                )}
+
+                                {showForm && (
+                                    <Stack spacing={2}>
+                                        <Grid container spacing={2}>
+                                            <TextField fullWidth label="List name" placeholder="My IPTV" value={listName} onChange={(e) => setListName(e.target.value)} />
+                                            <TextField fullWidth label="Playlist URL (M3U)" placeholder="https://example.com/list.m3u" value={m3uUrl} onChange={(e) => setM3uUrl(e.target.value)} />
+                                        </Grid>
+                                        <Box>
+                                            <Button variant="contained" onClick={onCreatePlaylist} disabled={!listName || !m3uUrl || loading}>
+                                                {loading ? <CircularProgress size={22} /> : 'Create and load'}
+                                            </Button>{' '}
+                                            {index.length > 0 && <Button variant="text" onClick={() => setShowForm(false)}>Cancel</Button>}
+                                        </Box>
+                                        {error && <Alert severity="error">{error}</Alert>}
+                                        {persistError && <Alert severity="warning">{persistError}</Alert>}
+                                    </Stack>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </>
                 )}
+
                 {selectedList && (
                     <>
+                        <Stack content={'center'} alignItems={'center'} flexDirection={'row'} gap={1} justifyContent={'center'}>
+                            <Image unoptimized src={'/logo.png?v=2'} alt={'DUNIPTV'} width={50} height={50}/>
+                            <Typography fontWeight={700} color={"#00ffa3"}>DUNIPTV</Typography>
+                        </Stack>
                         <Card>
                             <CardHeader
                                 title={selectedList.listName}
@@ -329,9 +300,7 @@ export default function Home() {
                                     </Box>
                                 ) : (
                                     <Box sx={{ p: 2 }}>
-                                        <Typography variant="body2" color="text.secondary">
-                                            Select a channel to start player
-                                        </Typography>
+                                        <Typography variant="body2" color="text.secondary">Select a channel to start player</Typography>
                                     </Box>
                                 )}
                             </CardContent>
@@ -340,10 +309,7 @@ export default function Home() {
                         <Card>
                             <CardHeader
                                 title="Channels"
-                                subheader={
-                                    `${filteredChannels.length} of ${channels.length} results` +
-                                    (selectedGroup ? ` • Group: ${selectedGroup}` : '')
-                                }
+                                subheader={`${filteredChannels.length} of ${channels.length} results` + (selectedGroup ? ` • Group: ${selectedGroup}` : '')}
                                 action={
                                     <FormControl size="small" sx={{ minWidth: 120 }}>
                                         <InputLabel id="page-size-label">Per page</InputLabel>
@@ -412,7 +378,7 @@ export default function Home() {
                                             ))}
                                         </Stack>
 
-                                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                                        <Box sx={{ display: 'res', justifyContent: 'center', py: 2 }}>
                                             <Pagination
                                                 count={totalPages} page={page}
                                                 onChange={(_, p) => setPage(p)} shape="rounded" color="primary"
