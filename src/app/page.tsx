@@ -362,11 +362,15 @@ export default function Home() {
                                                             });
                                                             const data = await res.json();
                                                             if (!res.ok) throw new Error(data?.error || 'Cannot resolve m3u8');
-                                                            setCurrent({ ...ch, url: data.m3u8 });
+
+                                                            const secureM3u8 = `/api/proxy?url=${encodeURIComponent(data.m3u8)}`;
+                                                            setCurrent({ ...ch, url: secureM3u8 });
                                                         } catch {
-                                                            setCurrent(ch);
+                                                            const secureM3u8 = `/api/proxy?url=${encodeURIComponent(ch.url)}`;
+                                                            setCurrent({ ...ch, url: secureM3u8 });
                                                         }
                                                     }}
+
                                                 >
                                                     <Avatar src={ch.logo} alt={ch.name}>{ch.name?.slice(0, 1).toUpperCase()}</Avatar>
                                                     <Box sx={{ flex: 1, minWidth: 0 }}>

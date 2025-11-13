@@ -12,7 +12,6 @@ export default function Player({ src, poster }: Props) {
         const video = videoRef.current;
         if (!video || !src) return;
 
-        const isM3U8 = /\.m3u8(\?|$)/i.test(src);
         if (lastSrcRef.current === src) return;
         lastSrcRef.current = src;
 
@@ -62,10 +61,10 @@ export default function Player({ src, poster }: Props) {
             );
         };
 
-        if (video.canPlayType('application/vnd.apple.mpegurl') && isM3U8) {
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
             video.src = src;
             video.play().catch(() => {});
-        } else if (Hls.isSupported() && isM3U8) {
+        } else if (Hls.isSupported()) {
             const cfg: any = { enableWorker: true, debug: false };
             try {
                 cfg.fragLoadPolicy = { default: { retry: { maxNumRetry: 1, retryDelayMs: 1500, maxRetryDelayMs: 4000 } } };
