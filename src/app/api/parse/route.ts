@@ -19,13 +19,9 @@ export async function POST(req: Request) {
         const channels = parseM3U(text);
 
         return NextResponse.json({ channels }, { status: 200 });
-    } catch (e: any) {
-        return NextResponse.json({ error: e?.message ?? 'Error' }, { status: 500 });
+    } catch {
+        return NextResponse.json('Error', { status: 500 });
     }
-}
-
-function isHttp(u: string) {
-    try { const x = new URL(u); return x.protocol === 'http:' || x.protocol === 'https:'; } catch { return false; }
 }
 
 function isM3U8(u: string) { return /\.m3u8(\?|$)/i.test(u); }

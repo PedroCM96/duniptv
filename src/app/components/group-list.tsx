@@ -1,4 +1,4 @@
-import {Box, Button, Card, CardContent, CardHeader, Stack, Typography, Chip} from "@mui/material";
+import {Box, Button, Card, CardContent, Chip, Stack, Typography} from "@mui/material";
 import PlaylistPlayIcon from "@mui/icons-material/PlaylistPlay";
 import {PlaylistMeta} from "@/app/types";
 

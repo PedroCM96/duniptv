@@ -32,7 +32,7 @@ export function idbTxComplete(tx: IDBTransaction): Promise<void> {
     });
 }
 
-export function reqToPromise<T = any>(req: IDBRequest<T>): Promise<T> {
+export function reqToPromise<T>(req: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
         req.onsuccess = () => resolve(req.result as T);
         req.onerror = () => reject(req.error);

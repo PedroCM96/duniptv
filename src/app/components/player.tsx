@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef } from 'react';
-import Hls from 'hls.js';
+import Hls, {ErrorData} from 'hls.js';
 
 type Props = { src?: string; poster?: string };
 
@@ -52,12 +52,10 @@ export default function Player({ src, poster }: Props) {
             try { video.removeAttribute('src'); video.load(); } catch {}
         };
 
-        const getHttpStatus = (data: any): number | undefined => {
+        const getHttpStatus = (data: ErrorData): number | undefined => {
             return (
-                data?.response?.code ??
-                data?.response?.status ??
-                data?.networkDetails?.status ??
-                data?.xhr?.status
+                data?.response?.code as number ??
+                data?.networkDetails?.status as number
             );
         };
 
@@ -65,7 +63,7 @@ export default function Player({ src, poster }: Props) {
             video.src = src;
             video.play().catch(() => {});
         } else if (Hls.isSupported()) {
-            const cfg: any = { enableWorker: true, debug: false };
+            const cfg: Record<string, boolean | object | Record<string, number | string>> = { enableWorker: true, debug: false };
             try {
                 cfg.fragLoadPolicy = { default: { retry: { maxNumRetry: 1, retryDelayMs: 1500, maxRetryDelayMs: 4000 } } };
                 cfg.manifestLoadPolicy = { default: { retry: { maxNumRetry: 1, retryDelayMs: 1500, maxRetryDelayMs: 4000 } } };
@@ -80,12 +78,12 @@ export default function Player({ src, poster }: Props) {
                 console.log('[HLS] MANIFEST_PARSED');
                 video.play().catch(() => {});
             });
-            hls.on(Hls.Events.FRAG_LOADED, (_e, d: any) => {
+            hls.on(Hls.Events.FRAG_LOADED, () => {
                 errCount = 0;
                 windowStart = Date.now();
             });
 
-            hls.on(Hls.Events.ERROR, (_ev, data: any) => {
+            hls.on(Hls.Events.ERROR, (_ev, data: ErrorData) => {
                 console.error('[HLS ERROR]', data.type, data.details, data);
 
                 const status = getHttpStatus(data);
