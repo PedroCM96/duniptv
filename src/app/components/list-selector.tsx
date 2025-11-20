@@ -6,11 +6,8 @@ import {
   CardContent,
   CardHeader,
   Chip,
-  CircularProgress,
-  Grid,
   IconButton,
   Stack,
-  TextField,
   Typography,
 } from '@mui/material';
 import Image from 'next/image';
@@ -27,6 +24,7 @@ import {
   STORE_CHANNELS,
   STORE_PLAYLISTS,
 } from '@/app/indexdb';
+import CreatePlaylist from '@/app/components/create-playlist';
 
 type Props = {
   onPlayListSelected: (pl: PlaylistMeta) => void;
@@ -34,9 +32,6 @@ type Props = {
 export default function ListSelector({ onPlayListSelected }: Props) {
   const [showForm, setShowForm] = useState(false);
   const [index, setIndex] = useState<PlaylistMeta[]>([]);
-
-  const [listName, setListName] = useState('');
-  const [m3uUrl, setM3uUrl] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -200,40 +195,13 @@ export default function ListSelector({ onPlayListSelected }: Props) {
           )}
 
           {showForm && (
-            <Stack spacing={2}>
-              <Grid container spacing={2}>
-                <TextField
-                  fullWidth
-                  label="List name"
-                  placeholder="My IPTV"
-                  value={listName}
-                  onChange={e => setListName(e.target.value)}
-                />
-                <TextField
-                  fullWidth
-                  label="Playlist URL (M3U)"
-                  placeholder="https://example.com/list.m3u"
-                  value={m3uUrl}
-                  onChange={e => setM3uUrl(e.target.value)}
-                />
-              </Grid>
-              <Box>
-                <Button
-                  variant="contained"
-                  onClick={() => onCreatePlaylist(listName, m3uUrl)}
-                  disabled={!listName || !m3uUrl || loading}
-                >
-                  {loading ? <CircularProgress size={22} /> : 'Create and load'}
-                </Button>{' '}
-                {index.length > 0 && (
-                  <Button variant="text" onClick={() => setShowForm(false)}>
-                    Cancel
-                  </Button>
-                )}
-              </Box>
-              {error && <Alert severity="error">{error}</Alert>}
-              {persistError && <Alert severity="warning">{persistError}</Alert>}
-            </Stack>
+            <CreatePlaylist
+              error={error}
+              persistError={persistError}
+              loading={loading}
+              onCreatePlaylist={onCreatePlaylist}
+              onCancel={() => setShowForm(false)}
+            />
           )}
         </CardContent>
       </Card>
